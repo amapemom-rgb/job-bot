@@ -1,8 +1,8 @@
 # Telegram bot
 aiogram==3.13.1
 
-# AI agents (pydantic-ai manages its own pydantic — do not pin separately)
-pydantic-ai[openai]
+# AI agent framework — NOTE: extra [openai] exists on pydantic-ai-slim, NOT on pydantic-ai
+pydantic-ai-slim[openai]>=0.0.14,<1.0.0
 
 # OpenAI-compatible client (for OpenRouter)
 openai>=1.30.0
