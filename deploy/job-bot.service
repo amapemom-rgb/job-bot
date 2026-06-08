@@ -1,0 +1,20 @@
+[Unit]
+Description=job-bot — AI job search Telegram bot
+After=network.target
+
+[Service]
+Type=simple
+User=root
+WorkingDirectory=/opt/job-bot
+ExecStart=/opt/job-bot/venv/bin/python bot.py
+Restart=on-failure
+RestartSec=5s
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=job-bot
+
+# Load environment from .env file
+EnvironmentFile=/opt/job-bot/.env
+
+[Install]
+WantedBy=multi-user.target
