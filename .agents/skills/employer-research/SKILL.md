@@ -1,6 +1,6 @@
 ---
 name: employer-research
-version: 1.0.0
+version: 1.1.0
 description: >
   Use this skill to research a company or employer before applying or interviewing.
   Triggers on any request to evaluate, check, or learn about a company:
@@ -18,111 +18,92 @@ allowed-tools: Browser(*)
 
 # Employer Research Skill
 
-Research a company using Glassdoor, LinkedIn, and web search via the Camofox browser.
-Goal: give the user a clear, honest employer card in under 2 minutes.
+**TOTAL TIME LIMIT: 3 minutes maximum.** If you haven't finished in 3 minutes, stop and report what you have.
 
-## What to Research
+Research the company using Google search snippets as the PRIMARY method.
+Direct site navigation is SECONDARY and only if the first search gives too little.
 
-For each company, collect:
-1. **Glassdoor data** — rating, review count, sentiment patterns, red flags
-2. **LinkedIn data** — company size, industry, founding year, recent activity
-3. **News check** — any recent layoffs, controversies, funding, acquisitions
+## Strategy: Search First, Browse Only If Needed
 
-## Step 1: Glassdoor
+### Step 1: Google search for Glassdoor reviews (30 seconds)
 
-Navigate to:
+Search for:
 ```
-https://www.glassdoor.com/Search/results.htm?keyword=[company name]
+[company name] glassdoor reviews rating
 ```
 
-If Glassdoor loads a company page, extract:
-- Overall rating (X.X / 5)
-- Total number of reviews
-- CEO approval % (if shown)
-- “Recommend to a friend” % (if shown)
-- Top 3–5 **most recent** reviews: note recurring themes
-  - positive: what employees consistently praise
-  - negative: what employees consistently criticize
-- “Cons” keywords to flag: "micromanagement", "toxic", "no work-life balance",
-  "high turnover", "mass layoffs", "promises not kept", "no growth"
+Read the **search result snippets only** — do NOT navigate to glassdoor.com.
+Glassdoor blocks bots. The Google snippet usually contains the rating, review count,
+and 1-2 sentences about pros/cons. That's enough.
 
-If Glassdoor is blocked or slow (>15s to load), try:
+If the snippet has a rating → use it. If not → note "Glassdoor data not in snippet".
+
+### Step 2: Google search for company basics (30 seconds)
+
+Search for:
 ```
-[company name] site:glassdoor.com reviews
+[company name] employees founded headquarters industry
 ```
-via web search, then extract from the search snippet.
 
-If nothing found on Glassdoor, note: “Not on Glassdoor — too small or too new.”
-
-## Step 2: LinkedIn
-
-Navigate to:
-```
-https://www.linkedin.com/company/[company-name-slug]/
-```
-(Replace spaces with hyphens, all lowercase.)
-
-Extract:
-- Company size (employee count range)
-- Industry / sector
-- Headquarters location
+From the snippet / knowledge panel extract:
+- Employee count
 - Founded year
-- Follower count (rough proxy for visibility)
-- Any recent posts or announcements (hiring spree? layoffs announced?)
+- HQ location
+- Industry
 
-If LinkedIn blocks or requires login:
-```
-[company name] linkedin company size employees founded
-```
-Search this via browser and extract from Google snippet.
+### Step 3: Google search for recent news (30 seconds)
 
-## Step 3: News Check
-
-Search:
+Search for:
 ```
-[company name] layoffs OR scandal OR funding OR acquisition 2024 OR 2025
+[company name] layoffs OR "mass layoffs" OR funding OR acquisition 2024 OR 2025 OR 2026
 ```
 
-Scan top 3–5 results. Flag anything in the last 12 months that affects job security:
-- Mass layoffs → ⚠️ high risk
-- Financial trouble / bankruptcy proceedings → ⚠️
-- Acquisition / merger → ⚠️ (role stability uncertain)
-- Fresh funding round → ✅ (growth mode, likely hiring)
-- IPO → neutral, note it
+Read snippets only. Flag anything relevant to job stability.
+
+### Step 4 (OPTIONAL — only if steps 1-3 gave very little): Direct LinkedIn
+
+If after 3 Google searches you have almost no data, try:
+```
+https://www.linkedin.com/company/[company-slug]/
+```
+Give it max 20 seconds. If it requires login or doesn't load — skip immediately.
+
+**NEVER navigate to:**
+- investor relations pages (investors.spotify.com, ir.company.com, etc.)
+- SEC filings or annual reports
+- Wikipedia or company's own website (too slow, not relevant for employer quality)
+- Any page that requires login
 
 ## Output Format
-
-Present as a compact employer card:
 
 ```
 🏢 **[Company Name]**
 📍 [City, Country] | 👥 [X–Y employees] | 🏥 [Industry] | Founded [year]
 
-⭐ Glassdoor: [X.X]/5 · [N] reviews | CEO approval: [X%] | Recommend: [X%]
+⭐ Glassdoor: [X.X]/5 · [N] reviews  [or "Не найдено"]
 
-✅ **Pros:** [2–3 recurring positives from reviews]
-❌ **Cons:** [2–3 recurring negatives]
+✅ Плюсы: [2–3 пункта из отзывов]
+❌ Минусы: [2–3 пункта]
 
-📰 **Recent news:** [1–2 sentence summary, or "Nothing notable in last 12 months"]
-
-🚦 **Red flags:** [list any, or "None found"]
-
-💡 **Verdict:** [1–2 sentence honest summary — is it worth applying?]
+📰 Новости: [1–2 предложения, или "Ничего нового за 12 месяцев"]
+🚦 Красные флаги: [или "Не найдено"]
+💡 Вывод: [1–2 честных предложения]
 ```
 
-## Scoring Guidelines
+## Glassdoor Rating Guide
 
-| Glassdoor | Signal |
-|-----------|--------|
-| 4.0–5.0 | ✅ Strong employer |
-| 3.5–3.9 | ⚠️ Mixed — read cons carefully |
-| 3.0–3.4 | ⚠️ Concerning — flag specific issues |
-| < 3.0 | 🔴 Avoid unless user has strong reason |
-| No data | ❓ Unknown — proceed with caution |
+| Rating | Signal |
+|--------|--------|
+| 4.0–5.0 | ✅ Хороший работодатель |
+| 3.5–3.9 | ⚠️ Смешанно — читай минусы внимательно |
+| 3.0–3.4 | ⚠️ Тревожно — называй конкретные проблемы |
+| < 3.0 | 🔴 Лучше избегать |
+| Нет данных | ❓ Неизвестно — обычно маленькая или новая компания |
 
 ## Hard Rules
-- Never fabricate ratings or quotes — if you couldn’t load the page, say so
-- Never skip the news check for companies with < 3.5 Glassdoor or < 100 reviews
-- Always respond in the same language the user used
-- If the company is a staffing agency / recruiter (not the actual employer), note it and try to research the end client if named
-- Time limit: complete the full card in under 3 minutes of browsing
+- **Total time: max 3 minutes.** Stop and report what you have, even if incomplete.
+- Never navigate to investor relations, SEC, annual reports, or the company's own website.
+- Never spend more than 20 seconds on any single page load.
+- If a page is slow or blocked — abort immediately, move to next source.
+- Always respond in the same language the user used.
+- If data is missing, say so — never fabricate ratings or quotes.
