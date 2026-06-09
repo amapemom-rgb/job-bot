@@ -1,6 +1,6 @@
 ---
 name: employer-research
-version: 1.2.0
+version: 1.3.0
 description: >
   Use this skill to research a company or employer before applying or interviewing.
   Triggers on any request to evaluate, check, or learn about a company:
@@ -10,55 +10,45 @@ description: >
   "стоит ли туда идти", "что за компания", "нормальная ли компания",
   "какой работодатель", "tell me about [company]", "company background",
   "is this company legit", "company culture", "red flags in job posting".
-  Also triggers automatically as part of the job-search skill whenever an employer
-  card needs to be evaluated for a vacancy.
-context: fork
+context: inline
 allowed-tools: Browser(*)
 ---
 
 # Employer Research Skill
 
-**TOTAL TIME LIMIT: 2 minutes.** Use ONLY the Browser tool. Do NOT use terminal, curl, or any other tool.
+**TOTAL TIME LIMIT: 2 minutes. ONLY use Browser tool. Do NOT use terminal or curl.**
 
-All research is done by navigating to Google search URLs in the browser and reading the results page.
-Do NOT navigate to Wikipedia, investor relations, SEC filings, or the company's own website.
+All research is done via Google search URLs in the browser. Read search result snippets only.
+Do NOT navigate to Wikipedia, investor relations, SEC, or the company's own website.
 
-## Step 1: Glassdoor rating via Google (30 sec)
-
-Navigate to this exact URL (replace COMPANY with the actual company name, URL-encoded):
-```
-https://www.google.com/search?q=COMPANY+glassdoor+reviews+rating
-```
-Example for Stripe: `https://www.google.com/search?q=Stripe+glassdoor+reviews+rating`
-
-Read the search results page. Look for:
-- A rating snippet (e.g. "4.1 stars · 3,200 reviews")
-- Short text about pros/cons from the Glassdoor listing in the snippet
-
-Do NOT click any link. Read only what's on the search results page.
-
-## Step 2: Company basics via Google (30 sec)
+## Step 1: Glassdoor rating (30 sec)
 
 Navigate to:
 ```
-https://www.google.com/search?q=COMPANY+company+employees+founded+headquarters
+https://www.google.com/search?q=[COMPANY]+glassdoor+reviews+rating
 ```
+Read snippets only. Extract: rating (X.X/5), review count, key pros/cons.
+Do NOT click any link.
 
-Read the Knowledge Panel on the right side of results (if present) or the snippets.
-Extract: employee count, founded year, HQ, industry.
-
-## Step 3: Recent news via Google (30 sec)
+## Step 2: Company basics (30 sec)
 
 Navigate to:
 ```
-https://www.google.com/search?q=COMPANY+layoffs+OR+funding+OR+acquisition+2025+OR+2026
+https://www.google.com/search?q=[COMPANY]+company+employees+founded+headquarters
 ```
+Extract from Knowledge Panel or snippets: employee count, founded year, HQ, industry.
 
+## Step 3: Recent news (30 sec)
+
+Navigate to:
+```
+https://www.google.com/search?q=[COMPANY]+layoffs+OR+funding+OR+acquisition+2025+OR+2026
+```
 Read snippet headlines only. Flag anything affecting job stability.
 
 ## Output Format
 
-Deliver the result immediately after step 3. Do not do any more browsing.
+Deliver immediately after step 3. No more browsing.
 
 ```
 🏢 **[Company Name]**
@@ -75,9 +65,8 @@ Deliver the result immediately after step 3. Do not do any more browsing.
 ```
 
 ## Hard Rules
-- Use ONLY browser_navigate. Never use terminal or curl.
-- Never navigate to: Wikipedia, investor relations, SEC, annual reports, company's own site.
-- If a page takes more than 15 seconds to load — stop and move to the next step.
-- Exactly 3 browser navigations total (one per step). Then write the answer.
-- Always respond in the same language the user used.
-- If data is missing, say so honestly — never fabricate.
+- Exactly 3 Google searches. Then write the answer immediately.
+- Never use terminal or curl.
+- Never navigate to Wikipedia, investor relations, or the company's own website.
+- 15 second max per page load. If slow — skip and move on.
+- Always respond in the user's language.
