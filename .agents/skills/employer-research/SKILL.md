@@ -1,6 +1,6 @@
 ---
 name: employer-research
-version: 1.1.0
+version: 1.2.0
 description: >
   Use this skill to research a company or employer before applying or interviewing.
   Triggers on any request to evaluate, check, or learn about a company:
@@ -18,92 +18,66 @@ allowed-tools: Browser(*)
 
 # Employer Research Skill
 
-**TOTAL TIME LIMIT: 3 minutes maximum.** If you haven't finished in 3 minutes, stop and report what you have.
+**TOTAL TIME LIMIT: 2 minutes.** Use ONLY the Browser tool. Do NOT use terminal, curl, or any other tool.
 
-Research the company using Google search snippets as the PRIMARY method.
-Direct site navigation is SECONDARY and only if the first search gives too little.
+All research is done by navigating to Google search URLs in the browser and reading the results page.
+Do NOT navigate to Wikipedia, investor relations, SEC filings, or the company's own website.
 
-## Strategy: Search First, Browse Only If Needed
+## Step 1: Glassdoor rating via Google (30 sec)
 
-### Step 1: Google search for Glassdoor reviews (30 seconds)
-
-Search for:
+Navigate to this exact URL (replace COMPANY with the actual company name, URL-encoded):
 ```
-[company name] glassdoor reviews rating
+https://www.google.com/search?q=COMPANY+glassdoor+reviews+rating
 ```
+Example for Stripe: `https://www.google.com/search?q=Stripe+glassdoor+reviews+rating`
 
-Read the **search result snippets only** — do NOT navigate to glassdoor.com.
-Glassdoor blocks bots. The Google snippet usually contains the rating, review count,
-and 1-2 sentences about pros/cons. That's enough.
+Read the search results page. Look for:
+- A rating snippet (e.g. "4.1 stars · 3,200 reviews")
+- Short text about pros/cons from the Glassdoor listing in the snippet
 
-If the snippet has a rating → use it. If not → note "Glassdoor data not in snippet".
+Do NOT click any link. Read only what's on the search results page.
 
-### Step 2: Google search for company basics (30 seconds)
+## Step 2: Company basics via Google (30 sec)
 
-Search for:
+Navigate to:
 ```
-[company name] employees founded headquarters industry
-```
-
-From the snippet / knowledge panel extract:
-- Employee count
-- Founded year
-- HQ location
-- Industry
-
-### Step 3: Google search for recent news (30 seconds)
-
-Search for:
-```
-[company name] layoffs OR "mass layoffs" OR funding OR acquisition 2024 OR 2025 OR 2026
+https://www.google.com/search?q=COMPANY+company+employees+founded+headquarters
 ```
 
-Read snippets only. Flag anything relevant to job stability.
+Read the Knowledge Panel on the right side of results (if present) or the snippets.
+Extract: employee count, founded year, HQ, industry.
 
-### Step 4 (OPTIONAL — only if steps 1-3 gave very little): Direct LinkedIn
+## Step 3: Recent news via Google (30 sec)
 
-If after 3 Google searches you have almost no data, try:
+Navigate to:
 ```
-https://www.linkedin.com/company/[company-slug]/
+https://www.google.com/search?q=COMPANY+layoffs+OR+funding+OR+acquisition+2025+OR+2026
 ```
-Give it max 20 seconds. If it requires login or doesn't load — skip immediately.
 
-**NEVER navigate to:**
-- investor relations pages (investors.spotify.com, ir.company.com, etc.)
-- SEC filings or annual reports
-- Wikipedia or company's own website (too slow, not relevant for employer quality)
-- Any page that requires login
+Read snippet headlines only. Flag anything affecting job stability.
 
 ## Output Format
 
+Deliver the result immediately after step 3. Do not do any more browsing.
+
 ```
 🏢 **[Company Name]**
-📍 [City, Country] | 👥 [X–Y employees] | 🏥 [Industry] | Founded [year]
+📍 [City, Country] | 👥 [employees] | 🏥 [Industry] | Founded [year]
 
-⭐ Glassdoor: [X.X]/5 · [N] reviews  [or "Не найдено"]
+⭐ Glassdoor: [X.X]/5 · [N отзывов]  [или "Не найдено"]
 
-✅ Плюсы: [2–3 пункта из отзывов]
-❌ Минусы: [2–3 пункта]
+✅ Плюсы: ...
+❌ Минусы: ...
 
-📰 Новости: [1–2 предложения, или "Ничего нового за 12 месяцев"]
+📰 Новости: ...
 🚦 Красные флаги: [или "Не найдено"]
-💡 Вывод: [1–2 честных предложения]
+💡 Вывод: ...
 ```
 
-## Glassdoor Rating Guide
-
-| Rating | Signal |
-|--------|--------|
-| 4.0–5.0 | ✅ Хороший работодатель |
-| 3.5–3.9 | ⚠️ Смешанно — читай минусы внимательно |
-| 3.0–3.4 | ⚠️ Тревожно — называй конкретные проблемы |
-| < 3.0 | 🔴 Лучше избегать |
-| Нет данных | ❓ Неизвестно — обычно маленькая или новая компания |
-
 ## Hard Rules
-- **Total time: max 3 minutes.** Stop and report what you have, even if incomplete.
-- Never navigate to investor relations, SEC, annual reports, or the company's own website.
-- Never spend more than 20 seconds on any single page load.
-- If a page is slow or blocked — abort immediately, move to next source.
+- Use ONLY browser_navigate. Never use terminal or curl.
+- Never navigate to: Wikipedia, investor relations, SEC, annual reports, company's own site.
+- If a page takes more than 15 seconds to load — stop and move to the next step.
+- Exactly 3 browser navigations total (one per step). Then write the answer.
 - Always respond in the same language the user used.
-- If data is missing, say so — never fabricate ratings or quotes.
+- If data is missing, say so honestly — never fabricate.
