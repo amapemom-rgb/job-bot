@@ -1,20 +1,23 @@
 #!/usr/bin/env python3
 """
-JSearch API client for Jabba job search bot.
-Aggregates LinkedIn, Indeed, Glassdoor, ZipRecruiter results.
+Jabba job search aggregator.
+Sources (in priority order):
+  1. Himalayas API  — 104K+ remote jobs, free, no key needed
+  2. JSearch API    — LinkedIn/Indeed/Glassdoor, requires JSEARCH_API_KEY
+  3. Remotive API   — ~17-30 remote jobs, free, no key needed
 
 Usage:
-  python3 search.py --query "software engineer" --location "Germany" --days 30 --max 10
-  python3 search.py --query "data analyst" --remote --days 7
-
-Requires: JSEARCH_API_KEY env var (free at https://rapidapi.com/letscrape-6bRBa3QguO5/api/jsearch)
+  python3 search.py --query "Python developer" --remote --days 30 --max 10
+  python3 search.py --query "backend engineer" --location "Germany" --days 30 --max 10
+  python3 search.py --query "data analyst" --remote --days 7 --max 5 --source himalayas
 """
 
 import argparse
 import json
 import os
 import sys
-from datetime import datetime, timezone
+from datetime import datetime, timezone, timedelta
+from pathlib import Path
 
 try:
     import requests
@@ -22,103 +25,245 @@ except ImportError:
     print(json.dumps({"error": "requests not installed. Run: pip3 install requests"}))
     sys.exit(1)
 
+# ── Load .env if API key not in environment ───────────────────────────────────
+_env_file = Path("/root/.hermes/profiles/jabba/.env")
+if not os.environ.get("JSEARCH_API_KEY") and _env_file.exists():
+    with open(_env_file) as _f:
+        for _line in _f:
+            if _line.startswith("JSEARCH_API_KEY="):
+                os.environ["JSEARCH_API_KEY"] = _line.strip().split("=", 1)[1]
+                break
 
-def search_jobs(
+
+# ── Himalayas API ─────────────────────────────────────────────────────────────
+def search_himalayas(
     query: str,
     location: str = None,
     remote: bool = False,
     days_posted: int = 30,
     max_results: int = 10,
 ) -> dict:
-    api_key = os.environ.get("JSEARCH_API_KEY")
-    if not api_key:
-        return {
-            "error": (
-                "JSEARCH_API_KEY not set. "
-                "Get a free key (500 req/month) at: "
-                "https://rapidapi.com/letscrape-6bRBa3QguO5/api/jsearch "
-                "then add JSEARCH_API_KEY=your_key to /root/.hermes/profiles/jabba/.env"
-            )
-        }
-
-    # Build natural-language query for JSearch
-    if remote:
-        search_query = f"{query} remote"
-    elif location:
-        search_query = f"{query} in {location}"
-    else:
-        search_query = query
-
-    date_map = {1: "today", 3: "3days", 7: "week", 30: "month"}
-    date_posted = date_map.get(days_posted, "month")
-
-    url = "https://jsearch.p.rapidapi.com/search"
-    headers = {
-        "X-RapidAPI-Key": api_key,
-        "X-RapidAPI-Host": "jsearch.p.rapidapi.com",
-    }
-    params = {
-        "query": search_query,
-        "page": "1",
-        "num_pages": "2",  # 2 pages = up to 20 raw results
-        "date_posted": date_posted,
-    }
+    """
+    Himalayas.app public API — 104K+ remote jobs, no API key required.
+    Server-side filters are unreliable, so we filter locally.
+    """
+    url = "https://himalayas.app/jobs/api"
+    # Fetch a larger batch to filter from (server filters don’t work well)
+    params = {"limit": 200, "offset": 0}
 
     try:
-        response = requests.get(url, headers=headers, params=params, timeout=20)
-        response.raise_for_status()
-        data = response.json()
+        resp = requests.get(url, params=params, timeout=20)
+        resp.raise_for_status()
+        data = resp.json()
     except requests.exceptions.Timeout:
-        return {"error": "JSearch API timeout (>20s). Try again later."}
-    except requests.exceptions.HTTPError as e:
-        if response.status_code == 429:
-            return {"error": "JSearch API rate limit reached (500 req/month). Try tomorrow."}
-        return {"error": f"HTTP error {response.status_code}: {str(e)}"}
+        return {"error": "Himalayas API timeout"}
     except requests.exceptions.RequestException as e:
-        return {"error": f"Request failed: {str(e)}"}
+        return {"error": f"Himalayas request failed: {e}"}
 
-    if data.get("status") != "OK":
-        return {"error": f"API error: {data.get('message', 'Unknown')}"}
+    jobs_raw = data.get("jobs", [])
+    if not jobs_raw:
+        return {"error": "Himalayas returned no jobs"}
+
+    # Local filtering
+    query_words = [w.lower() for w in query.split()]
+    cutoff = datetime.now(timezone.utc) - timedelta(days=days_posted)
 
     jobs = []
-    for job in data.get("data", [])[:max_results]:
-        # Parse posting date
+    for job in jobs_raw:
+        # Match query against title + categories
+        title = (job.get("title") or "").lower()
+        cats = " ".join(job.get("categories") or []).lower()
+        desc_preview = (job.get("description") or "")[:200].lower()
+        text = f"{title} {cats} {desc_preview}"
+
+        if not any(w in text for w in query_words):
+            continue
+
+        # Location filter
+        loc_restrictions = job.get("locationRestrictions") or []
+        if location and not remote:
+            loc_str = " ".join(loc_restrictions).lower()
+            if location.lower() not in loc_str and "worldwide" not in loc_str:
+                continue
+
+        # Date filter
+        posted_raw = job.get("createdAt") or job.get("publishedAt") or ""
         days_ago = None
-        posted_raw = job.get("job_posted_at_datetime_utc", "")
         if posted_raw:
             try:
                 posted_dt = datetime.fromisoformat(posted_raw.replace("Z", "+00:00"))
+                if posted_dt < cutoff:
+                    continue
                 days_ago = (datetime.now(timezone.utc) - posted_dt).days
             except Exception:
                 pass
 
         # Salary
-        salary_min = job.get("job_min_salary")
-        salary_max = job.get("job_max_salary")
-        salary_period = job.get("job_salary_period", "year") or "year"
-        salary_currency = job.get("job_salary_currency", "USD") or "USD"
-
-        if salary_min and salary_max:
-            salary = f"{salary_currency} {int(salary_min):,}–{int(salary_max):,}/{salary_period}"
-        elif salary_min:
-            salary = f"{salary_currency} {int(salary_min):,}+/{salary_period}"
+        sal_min = job.get("minSalary")
+        sal_max = job.get("maxSalary")
+        currency = job.get("currency") or "USD"
+        if sal_min and sal_max:
+            salary = f"{currency} {int(sal_min):,}–{int(sal_max):,}/year"
+        elif sal_min:
+            salary = f"{currency} {int(sal_min):,}+/year"
         else:
             salary = None
 
-        # Location string
+        jobs.append({
+            "title": job.get("title", ""),
+            "company": job.get("companyName") or job.get("company", {}).get("name", ""),
+            "location": ", ".join(loc_restrictions) if loc_restrictions else "Remote",
+            "is_remote": True,
+            "employment_type": job.get("employmentType", ""),
+            "seniority": job.get("seniority") or job.get("jobLevel", ""),
+            "salary": salary,
+            "posted_days_ago": days_ago,
+            "source": "Himalayas",
+            "required_skills": (job.get("categories") or [])[:6],
+            "qualifications": [],
+            "responsibilities": [],
+            "description_preview": (job.get("description") or "")[:500].strip(),
+            "apply_url": job.get("applicationUrl") or job.get("url") or "",
+            "experience_required": {"months": None, "no_experience_required": False},
+            "education_required": {"level": "", "no_degree": False},
+        })
+
+        if len(jobs) >= max_results:
+            break
+
+    return {
+        "source": "himalayas",
+        "query": query,
+        "total_found": len(jobs),
+        "returned": len(jobs),
+        "jobs": jobs,
+    }
+
+
+# ── Remotive API ──────────────────────────────────────────────────────────────
+def search_remotive(query: str, max_results: int = 10) -> dict:
+    """Remotive public API — ~17-30 remote tech jobs, no API key required."""
+    url = "https://remotive.com/api/remote-jobs"
+    params = {"category": "software-dev", "limit": 50}
+
+    try:
+        resp = requests.get(url, params=params, timeout=15)
+        resp.raise_for_status()
+        data = resp.json()
+    except requests.exceptions.RequestException as e:
+        return {"error": f"Remotive request failed: {e}"}
+
+    query_words = [w.lower() for w in query.split()]
+    jobs = []
+    for job in data.get("jobs", []):
+        text = f"{job.get('title', '')} {' '.join(job.get('tags', []))}".lower()
+        if not any(w in text for w in query_words):
+            continue
+
+        # Parse date
+        days_ago = None
+        pub_date = job.get("publication_date", "")
+        if pub_date:
+            try:
+                dt = datetime.fromisoformat(pub_date.replace("Z", "+00:00"))
+                days_ago = (datetime.now(timezone.utc) - dt).days
+            except Exception:
+                pass
+
+        jobs.append({
+            "title": job.get("title", ""),
+            "company": job.get("company_name", ""),
+            "location": job.get("candidate_required_location") or "Remote",
+            "is_remote": True,
+            "employment_type": job.get("job_type", ""),
+            "seniority": "",
+            "salary": job.get("salary") or None,
+            "posted_days_ago": days_ago,
+            "source": "Remotive",
+            "required_skills": (job.get("tags") or [])[:6],
+            "qualifications": [],
+            "responsibilities": [],
+            "description_preview": "",
+            "apply_url": job.get("url", ""),
+            "experience_required": {"months": None, "no_experience_required": False},
+            "education_required": {"level": "", "no_degree": False},
+        })
+
+        if len(jobs) >= max_results:
+            break
+
+    return {
+        "source": "remotive",
+        "query": query,
+        "total_found": len(jobs),
+        "returned": len(jobs),
+        "jobs": jobs,
+    }
+
+
+# ── JSearch API ───────────────────────────────────────────────────────────────
+def search_jsearch(
+    query: str,
+    location: str = None,
+    remote: bool = False,
+    days_posted: int = 30,
+    max_results: int = 10,
+) -> dict:
+    """JSearch via RapidAPI — aggregates LinkedIn, Indeed, Glassdoor, ZipRecruiter."""
+    api_key = os.environ.get("JSEARCH_API_KEY")
+    if not api_key:
+        return {"error": "JSEARCH_API_KEY not set. Get free key at rapidapi.com/letscrape-6bRBa3QguO5/api/jsearch"}
+
+    search_query = f"{query} remote" if remote else (f"{query} in {location}" if location else query)
+    date_map = {1: "today", 3: "3days", 7: "week", 30: "month"}
+
+    try:
+        resp = requests.get(
+            "https://jsearch.p.rapidapi.com/search",
+            headers={"X-RapidAPI-Key": api_key, "X-RapidAPI-Host": "jsearch.p.rapidapi.com"},
+            params={"query": search_query, "page": "1", "num_pages": "2",
+                    "date_posted": date_map.get(days_posted, "month")},
+            timeout=20,
+        )
+        resp.raise_for_status()
+        data = resp.json()
+    except requests.exceptions.Timeout:
+        return {"error": "JSearch API timeout"}
+    except requests.exceptions.HTTPError as e:
+        if resp.status_code == 429:
+            return {"error": "JSearch rate limit (500 req/month). Try tomorrow."}
+        return {"error": f"JSearch HTTP {resp.status_code}: {e}"}
+    except requests.exceptions.RequestException as e:
+        return {"error": f"JSearch request failed: {e}"}
+
+    if data.get("status") != "OK":
+        return {"error": f"JSearch error: {data.get('message', 'Unknown')}"}
+
+    jobs = []
+    for job in data.get("data", [])[:max_results]:
+        days_ago = None
+        posted_raw = job.get("job_posted_at_datetime_utc", "")
+        if posted_raw:
+            try:
+                dt = datetime.fromisoformat(posted_raw.replace("Z", "+00:00"))
+                days_ago = (datetime.now(timezone.utc) - dt).days
+            except Exception:
+                pass
+
+        sal_min = job.get("job_min_salary")
+        sal_max = job.get("job_max_salary")
+        sal_cur = job.get("job_salary_currency", "USD") or "USD"
+        sal_per = job.get("job_salary_period", "year") or "year"
+        if sal_min and sal_max:
+            salary = f"{sal_cur} {int(sal_min):,}–{int(sal_max):,}/{sal_per}"
+        elif sal_min:
+            salary = f"{sal_cur} {int(sal_min):,}+/{sal_per}"
+        else:
+            salary = None
+
         city = job.get("job_city") or ""
-        state = job.get("job_state") or ""
         country = job.get("job_country") or ""
-        location_parts = [p for p in [city, state, country] if p]
-        location_str = ", ".join(location_parts) if location_parts else "Not specified"
-
-        # Required skills (top 8 to keep it readable)
-        required_skills = (job.get("job_required_skills") or [])[:8]
-
-        # Job highlights (bullets from description)
-        highlights = job.get("job_highlights") or {}
-        qualifications = (highlights.get("Qualifications") or [])[:5]
-        responsibilities = (highlights.get("Responsibilities") or [])[:3]
+        location_str = ", ".join(p for p in [city, country] if p) or "Not specified"
 
         jobs.append({
             "title": job.get("job_title", ""),
@@ -126,13 +271,14 @@ def search_jobs(
             "location": location_str,
             "is_remote": job.get("job_is_remote", False),
             "employment_type": job.get("job_employment_type", ""),
+            "seniority": "",
             "salary": salary,
             "posted_days_ago": days_ago,
-            "source": job.get("job_publisher", ""),
-            "required_skills": required_skills,
-            "qualifications": qualifications,
-            "responsibilities": responsibilities,
-            "description_preview": (job.get("job_description") or "")[:600].strip(),
+            "source": job.get("job_publisher", "JSearch"),
+            "required_skills": (job.get("job_required_skills") or [])[:6],
+            "qualifications": ((job.get("job_highlights") or {}).get("Qualifications") or [])[:4],
+            "responsibilities": ((job.get("job_highlights") or {}).get("Responsibilities") or [])[:3],
+            "description_preview": (job.get("job_description") or "")[:500].strip(),
             "apply_url": job.get("job_apply_link", ""),
             "experience_required": {
                 "months": (job.get("job_required_experience") or {}).get("required_experience_in_months"),
@@ -145,6 +291,7 @@ def search_jobs(
         })
 
     return {
+        "source": "jsearch",
         "query": search_query,
         "total_found": data.get("data_count", len(jobs)),
         "returned": len(jobs),
@@ -152,22 +299,77 @@ def search_jobs(
     }
 
 
-def main():
-    parser = argparse.ArgumentParser(
-        description="Search jobs via JSearch API (LinkedIn/Indeed/Glassdoor aggregator)"
-    )
-    parser.add_argument("--query", required=True, help="Job title or skills")
-    parser.add_argument("--location", help="City, country, or region (omit for --remote)")
-    parser.add_argument("--remote", action="store_true", help="Search for remote jobs")
-    parser.add_argument(
-        "--days", type=int, default=30, choices=[1, 3, 7, 30],
-        help="Posted within N days (default: 30)"
-    )
-    parser.add_argument(
-        "--max", type=int, default=10,
-        help="Max results to return (default: 10)"
-    )
+# ── Main aggregator ───────────────────────────────────────────────────────────
+def search_jobs(
+    query: str,
+    location: str = None,
+    remote: bool = False,
+    days_posted: int = 30,
+    max_results: int = 10,
+    source: str = "auto",
+) -> dict:
+    """
+    Aggregate results from multiple sources.
+    source: "auto" | "himalayas" | "jsearch" | "remotive" | "all"
+    """
+    results = []
+    errors = []
 
+    if source in ("auto", "all", "himalayas"):
+        r = search_himalayas(query, location, remote, days_posted, max_results)
+        if "error" in r:
+            errors.append(f"Himalayas: {r['error']}")
+        else:
+            results.extend(r["jobs"])
+
+    if source in ("all", "jsearch") or (source == "auto" and len(results) < 5):
+        r = search_jsearch(query, location, remote, days_posted, max_results)
+        if "error" in r:
+            errors.append(f"JSearch: {r['error']}")
+        else:
+            # Avoid duplicates by title+company
+            seen = {(j["title"].lower(), j["company"].lower()) for j in results}
+            for j in r["jobs"]:
+                key = (j["title"].lower(), j["company"].lower())
+                if key not in seen:
+                    results.append(j)
+                    seen.add(key)
+
+    if source in ("all", "remotive") or (source == "auto" and len(results) < 5):
+        r = search_remotive(query, max_results)
+        if "error" in r:
+            errors.append(f"Remotive: {r['error']}")
+        else:
+            seen = {(j["title"].lower(), j["company"].lower()) for j in results}
+            for j in r["jobs"]:
+                key = (j["title"].lower(), j["company"].lower())
+                if key not in seen:
+                    results.append(j)
+                    seen.add(key)
+
+    results = results[:max_results]
+
+    return {
+        "query": query,
+        "sources_used": list({j["source"] for j in results}),
+        "sources_errors": errors if errors else None,
+        "total_found": len(results),
+        "returned": len(results),
+        "jobs": results,
+    }
+
+
+def main():
+    parser = argparse.ArgumentParser(description="Jabba job search aggregator")
+    parser.add_argument("--query", required=True, help="Job title or skills")
+    parser.add_argument("--location", help="City or country (omit for --remote)")
+    parser.add_argument("--remote", action="store_true", help="Remote jobs only")
+    parser.add_argument("--days", type=int, default=30, choices=[1, 3, 7, 30],
+                        help="Posted within N days (default: 30)")
+    parser.add_argument("--max", type=int, default=10, help="Max results (default: 10)")
+    parser.add_argument("--source", default="auto",
+                        choices=["auto", "himalayas", "jsearch", "remotive", "all"],
+                        help="Data source (default: auto)")
     args = parser.parse_args()
 
     result = search_jobs(
@@ -176,8 +378,8 @@ def main():
         remote=args.remote,
         days_posted=args.days,
         max_results=args.max,
+        source=args.source,
     )
-
     print(json.dumps(result, ensure_ascii=False, indent=2))
 
 
