@@ -1,19 +1,23 @@
+# Python >= 3.10 required
+#
+# ВАЖНО: версии запинены. Код написан под API pydantic-ai 0.0.x:
+#   OpenAIModel(model, openai_client=...), Agent(result_type=...), result.data
+# В новых версиях pydantic-ai этот API изменён (providers, output_type,
+# result.output) — обновление версии требует миграции кода.
+
 # Telegram bot
 aiogram==3.13.1
 
-# AI agent framework — NOTE: extra [openai] exists on pydantic-ai-slim, NOT on pydantic-ai
-pydantic-ai-slim[openai]>=0.0.14,<1.0.0
+# AI agent framework (extra [openai] существует на pydantic-ai-slim)
+pydantic-ai-slim[openai]==0.0.14
 
 # OpenAI-compatible client (for OpenRouter)
-openai>=1.30.0
+openai>=1.30.0,<2.0.0
 
 # HTTP & parsing
-httpx>=0.27.0
-beautifulsoup4>=4.12.0
-lxml>=5.2.0
+httpx>=0.27.0,<1.0.0
+beautifulsoup4>=4.12.0,<5.0.0
+lxml>=5.2.0,<6.0.0
 
 # Config
-python-dotenv>=1.0.0
-
-# Job search utilities
-requests>=2.31.0
+python-dotenv>=1.0.0,<2.0.0
