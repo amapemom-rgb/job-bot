@@ -1,6 +1,10 @@
-"""Configuration: models, settings, routing rules."""
+"""Configuration: models, settings, routing rules.
+
+Совместимо с Python 3.10+ (без f-строк с переиспользованием кавычек, PEP 701).
+"""
 import os
 from dataclasses import dataclass, field
+
 from dotenv import load_dotenv
 
 load_dotenv()
@@ -75,10 +79,59 @@ MODEL_REGISTRY: dict[str, ModelConfig] = {
     ),
 }
 
-# Description string injected into the router's system prompt
-MODEL_DESCRIPTIONS: str = "\n".join(
-    f'- task_category="{key}": model_id="{cfg.model_id}" — {cfg.description} '
-    f'(best for: {', '.join(cfg.best_for)})'
-    for key, cfg in MODEL_REGISTRY.items()
-    if key != "router"
-)
+DEFAULT_CATEGORY = "chat"
+
+# Цепочки фолбэка: если выбранная модель упала (rate limit бесплатных
+# моделей OpenRouter — обычное дело), пробуем следующую.
+# premium НЕ включён в автофолбэк бесплатных категорий — платная модель
+# не должна включаться без явного решения.
+FALLBACK_CHAIN: dict[str, list[str]] = {
+    "chat": ["chat", "analyze"],
+    "analyze": ["analyze", "chat"],
+    "write": ["write", "analyze", "chat"],
+    "code": ["code", "chat"],
+    "premium": ["premium", "write", "chat"],
+}
+
+
+def resolve_model(task_category: str) -> str:
+    """Маппинг категории → model_id на стороне сервера.
+
+    LLM-роутер возвращает только категорию; строку модели он не пишет
+    (опечатки и «творческий» выбор платной модели исключены).
+    Неизвестная категория → chat.
+    """
+    key = (task_category or "").strip().lower()
+    cfg = MODEL_REGISTRY.get(key)
+    if cfg is None or key == "router":
+        cfg = MODEL_REGISTRY[DEFAULT_CATEGORY]
+    return cfg.model_id
+
+
+def fallback_models(task_category: str) -> list[str]:
+    """Список model_id для категории: основная + фолбэки, без дублей."""
+    key = (task_category or "").strip().lower()
+    categories = FALLBACK_CHAIN.get(key, [DEFAULT_CATEGORY])
+    seen: set[str] = set()
+    out: list[str] = []
+    for cat in categories:
+        mid = resolve_model(cat)
+        if mid not in seen:
+            seen.add(mid)
+            out.append(mid)
+    return out
+
+
+# Description string injected into the router's system prompt.
+# Собрано циклом, а не вложенной f-строкой — синтаксис валиден на Python 3.10+.
+_desc_lines: list[str] = []
+for _key, _cfg in MODEL_REGISTRY.items():
+    if _key == "router":
+        continue
+    _best = ", ".join(_cfg.best_for)
+    _desc_lines.append(
+        '- task_category="{key}" — {desc} (best for: {best})'.format(
+            key=_key, desc=_cfg.description, best=_best
+        )
+    )
+MODEL_DESCRIPTIONS: str = "\n".join(_desc_lines)

@@ -1,20 +1,29 @@
 """User profile and conversation history — stored as JSON files.
 
-MVP storage: one JSON file per user in data/users/.
-Can be swapped for a database (PostgreSQL, Redis) later without changing the API.
+MVP storage: one JSON file per user in data/users/ (путь настраивается
+через JOB_BOT_DATA_DIR). Запись атомарная (tmp + os.replace), чтобы
+параллельное сообщение не оставило битый JSON.
+
+Конкурентный доступ из нескольких хендлеров сериализуется per-user
+локами на стороне bot.py.
 """
 from __future__ import annotations
 
 import json
+import os
 from dataclasses import dataclass, field, asdict
 from datetime import datetime, timezone
 from pathlib import Path
 
-DATA_DIR = Path("data/users")
+DATA_DIR = Path(os.getenv("JOB_BOT_DATA_DIR", "data/users"))
 DATA_DIR.mkdir(parents=True, exist_ok=True)
 
 MAX_HISTORY = 20   # conversation messages to keep
 MAX_JOBS = 50      # job search history entries to keep
+
+# Поля профиля, которые можно обновлять из извлечённых роутером данных
+_SCALAR_FIELDS = ("profession", "salary_expectation")
+_LIST_FIELDS = ("skills", "preferred_locations", "languages")
 
 
 @dataclass
@@ -72,7 +81,7 @@ def load(user_id: int) -> UserMemory:
 
 
 def save(memory: UserMemory) -> None:
-    """Persist user memory to disk."""
+    """Persist user memory to disk (atomic: tmp + os.replace)."""
     memory.profile.updated_at = _now()
     # Trim to limits
     memory.conversation_history = memory.conversation_history[-MAX_HISTORY:]
@@ -82,9 +91,12 @@ def save(memory: UserMemory) -> None:
         "conversation_history": memory.conversation_history,
         "job_search_history": memory.job_search_history,
     }
-    _path(memory.profile.user_id).write_text(
+    target = _path(memory.profile.user_id)
+    tmp = target.with_suffix(".json.tmp")
+    tmp.write_text(
         json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8"
     )
+    os.replace(tmp, target)
 
 
 def add_message(memory: UserMemory, role: str, content: str) -> None:
@@ -98,3 +110,35 @@ def update_profile_field(memory: UserMemory, field_name: str, value: object) -> 
     """Update a single field in user profile."""
     if hasattr(memory.profile, field_name):
         setattr(memory.profile, field_name, value)
+
+
+def merge_profile_updates(memory: UserMemory, updates: dict) -> list[str]:
+    """Вливает извлечённые роутером данные профиля.
+
+    Скаляры перезаписываются непустыми значениями, списки дополняются
+    без дублей. Возвращает список изменённых полей.
+    """
+    p = memory.profile
+    changed: list[str] = []
+
+    for key in _SCALAR_FIELDS:
+        val = updates.get(key)
+        if isinstance(val, str):
+            val = val.strip()
+        if val and val != getattr(p, key):
+            setattr(p, key, val)
+            changed.append(key)
+
+    for key in _LIST_FIELDS:
+        vals = updates.get(key) or []
+        current = getattr(p, key)
+        current_lower = {str(v).lower() for v in current}
+        new_items = [
+            str(v).strip() for v in vals
+            if v and str(v).strip() and str(v).strip().lower() not in current_lower
+        ]
+        if new_items:
+            current.extend(new_items)
+            changed.append(key)
+
+    return changed
